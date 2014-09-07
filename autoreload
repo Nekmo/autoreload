@@ -1,0 +1,169 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+import os
+import sys
+import time
+import logging
+import signal
+import threading
+import shlex
+from subprocess import Popen, check_output
+from watchdog.observers import Observer
+from watchdog.events import LoggingEventHandler
+
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(message)s',
+                    datefmt='%Y-%m-%d %H:%M:%S')
+
+RELOAD_WINDOW_DELAY = .7
+WAIT_FOR_KILLING = 3
+PANKO = 2 ** 32
+
+class Extensions(object):
+    def __init__(self, extensions):
+        def add_dot(ext):
+            if not ext.startswith('.'):
+                ext = '.' + ext
+            return ext
+        self.extensions = map(add_dot, extensions)
+
+    def __contains__(self, path):
+        for extension in self.extensions:
+            if path.endswith(extension): return True
+        return False
+
+def run_in_event(f):
+    def inner(*args, **kwargs):
+        self, event = args[0], args[1]
+        if self.extensions and not event.src_path in self.extensions:
+            return
+        logging = f(*args, **kwargs)
+        self.in_event(event)
+        return logging
+    return inner
+
+class ReloadWindow(threading.Thread):
+    def __init__(self, window):
+        self.window = window
+        threading.Thread.__init__(self)
+        self.daemon = True
+
+    def run(self):
+        # Ventana con foco ahora mismo
+        time.sleep(RELOAD_WINDOW_DELAY)
+        windowfocus = check_output('xdotool getwindowfocus'.split(' '))
+        # Ventanas a recargar
+        cmd = ('xdotool search --onlyvisible --class %s' % self.window).split(' ')
+        windows = check_output(cmd).split('\n')[:-1]
+        # Recargar las ventanas
+        for window in windows:
+            check_output(('xdotool windowactivate %s' % window).split(' '))
+            check_output("xdotool key ctrl+r".split(' '))
+        # Devolver foco al original
+        Popen(('xdotool windowactivate %s' % windowfocus).split(' '))
+
+class ReloadDaemon(LoggingEventHandler):
+    def __init__(self, command, is_daemon=False, extensions=None, execute_before=None,
+                 execute_after=None, reload_window=None):
+        self.command, self.is_daemon = command, is_daemon 
+        self.execute_before, self.execute_after = execute_before, execute_after
+        self.extensions = Extensions(extensions) if extensions is not None else False
+        self.reload_window = reload_window
+        # Como True cuando se está esperando para un reinicio. Evita
+        # Que se reinicie desde otro hilo cuando todavía no se ha reiniciado
+        # actualmente.
+        self.is_reloading, self.process = False, None
+
+
+    def reload(self):
+        if self.is_reloading: return
+        self.is_reloading = True
+        if self.process is not None:
+            if not self.is_daemon:
+                sys.stdout.write('Waiting... ')
+                self.process.wait()
+            elif self.is_daemon and self.process.poll() is None:
+                sys.stdout.write('Stopping... ')
+                self.process.terminate()
+                for i in range(WAIT_FOR_KILLING * 10):
+                    if self.process.poll() is not None: break
+                    time.sleep(WAIT_FOR_KILLING / 10.0)
+                if self.process.poll() is None:
+                    sys.stdout.write('Killing... ')
+                    try:
+                        self.process.kill()
+                    except:
+                        pass
+        sys.stdout.write('Starting...\n')
+        self.process = Popen(self.command, stdout=sys.stdout, stderr=sys.stderr)
+        self.is_reloading = False
+
+    def in_event(self, event):
+        if self.extensions and not event.src_path in self.extensions:
+            return
+        if self.execute_before:
+            Popen(self.execute_before, stdout=sys.stdout, stderr=sys.stderr)
+        self.reload()
+        if self.execute_after:
+            Popen(self.execute_after, stdout=sys.stdout, stderr=sys.stderr)
+        if self.reload_window:
+            ReloadWindow(self.reload_window).run()
+
+    @run_in_event
+    def on_moved(self, event):
+        super(ReloadDaemon, self).on_moved(event)
+
+    @run_in_event
+    def on_created(self, event):
+        super(ReloadDaemon, self).on_created(event)
+
+    @run_in_event
+    def on_deleted(self, event):
+        super(ReloadDaemon, self).on_deleted(event)
+
+    @run_in_event
+    def on_modified(self, event):
+        super(ReloadDaemon, self).on_modified(event)
+
+
+def event_handler(*args, **kwargs):
+    print(args, kwargs)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(prog='autoreload')
+    
+    parser.add_argument('command', nargs='+',
+        help='Ejecutable a correr')
+    parser.add_argument('-d', '--is-daemon', action="store_true")
+    parser.add_argument('-p', '--path', default=".")
+    parser.add_argument('-e', '--extensions', default=None)
+    parser.add_argument('-b', '--execute-before', default=None)
+    parser.add_argument('-a', '--execute-after', default=None)
+    parser.add_argument('-w', '--reload-window', default=None)
+    args = parser.parse_args()
+    if len(args.command) == 1:
+        args.command = shlex.split(args.command[0])
+    if args.extensions:
+        args.extensions = args.extensions.split(',')
+    if args.execute_before:
+        args.execute_before = shlex.split(args.execute_before)
+    if args.execute_after:
+        args.execute_after = shlex.split(args.execute_after)
+    event_handler = ReloadDaemon(
+        args.command, args.is_daemon, args.extensions, args.execute_before,
+        args.execute_after, args.reload_window
+    )
+    event_handler.reload()
+    observer = Observer()
+    observer.schedule(event_handler, args.path, recursive=True)
+    observer.daemon = True
+    observer.start()
+    try:
+        time.sleep(PANKO)
+    except:
+        observer.stop()
+        observer.join()
+        print('Bye')
