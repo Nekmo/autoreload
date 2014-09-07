@@ -127,10 +127,6 @@ class ReloadDaemon(LoggingEventHandler):
     def on_modified(self, event):
         super(ReloadDaemon, self).on_modified(event)
 
-
-def event_handler(*args, **kwargs):
-    print(args, kwargs)
-
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(prog='autoreload')
