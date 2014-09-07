@@ -1,0 +1,3 @@
+# autoreload #
+
+No recargues nunca más. Autoreload vigila por ti un directorio en busca de cambios, permitiéndote iniciar un programa en cuanto suceda uno. Autoreload, a diferencia de otros de la competencia, permite que dicho programa sea un daemon, terminando el ya existente e iniciando el nuevo. Además, cuenta con muchas cosas más como definir un comando a ejecutar antes o después, por qué extensión de archivo se vigilará, ¡¡o incluso recargar una ventana tras un cambio!!
