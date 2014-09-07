@@ -7,7 +7,7 @@ import logging
 import signal
 import threading
 import shlex
-from subprocess import Popen, check_output
+from subprocess import Popen, check_output, check_call
 from watchdog.observers import Observer
 from watchdog.events import LoggingEventHandler
 
@@ -17,6 +17,7 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(message)s',
                     datefmt='%Y-%m-%d %H:%M:%S')
 
+DELAY = 1
 RELOAD_WINDOW_DELAY = .7
 WAIT_FOR_KILLING = 3
 PANKO = 2 ** 32
@@ -78,8 +79,6 @@ class ReloadDaemon(LoggingEventHandler):
 
 
     def reload(self):
-        if self.is_reloading: return
-        self.is_reloading = True
         if self.process is not None:
             if not self.is_daemon:
                 sys.stdout.write('Waiting... ')
@@ -98,18 +97,21 @@ class ReloadDaemon(LoggingEventHandler):
                         pass
         sys.stdout.write('Starting...\n')
         self.process = Popen(self.command, stdout=sys.stdout, stderr=sys.stderr)
-        self.is_reloading = False
 
     def in_event(self, event):
         if self.extensions and not event.src_path in self.extensions:
             return
+        if self.is_reloading: return
+        self.is_reloading = True
         if self.execute_before:
-            Popen(self.execute_before, stdout=sys.stdout, stderr=sys.stderr)
+            check_call(self.execute_before)
         self.reload()
         if self.execute_after:
             Popen(self.execute_after, stdout=sys.stdout, stderr=sys.stderr)
         if self.reload_window:
             ReloadWindow(self.reload_window).run()
+        time.sleep(DELAY)
+        self.is_reloading = False
 
     @run_in_event
     def on_moved(self, event):
