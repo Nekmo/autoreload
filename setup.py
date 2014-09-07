@@ -19,5 +19,6 @@ setup(name='autoreload',
       author_email='contacto@nekmo.com',
       url='http://nekmo.com/',
       packages=[],
-      scripts=['autoreload']
+      scripts=['autoreload'],
+      install_requires=['watchdog'],
      ) 
