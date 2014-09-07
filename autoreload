@@ -41,7 +41,9 @@ def run_in_event(f):
         if self.extensions and not event.src_path in self.extensions:
             return
         logging = f(*args, **kwargs)
-        threading.Thread(target=self.in_event, args=(event,)).start()
+        l = threading.Thread(target=self.in_event, args=(event,))
+        l.daemon = True
+        l.start()
         return logging
     return inner
 
